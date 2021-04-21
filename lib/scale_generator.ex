@@ -1,6 +1,7 @@
 defmodule ScaleGenerator do
-  @notes ~w(C C# D D# E F F# G G# A A# B)
+  @chromatic ~w(C C# D D# E F F# G G# A A# B)
   @flat_chromatic ~w(A Bb B C Db D Eb E F Gb G Ab)
+
   @doc """
   Find the note for a given interval (`step`) in a `scale` after the `tonic`.
 
@@ -22,14 +23,12 @@ defmodule ScaleGenerator do
   def step(scale, tonic, "A"), do: step_number(scale, tonic, 3)
 
   def step_number(scale, tonic, step) do
-    note_index =
-      scale
-      |> Enum.find_index(&(&1 == tonic))
-      |> Kernel.+(step)
-      |> rem(length(scale))
-
-    {:ok, note} = Enum.fetch(scale, note_index)
-    note
+    scale
+    |> Stream.cycle()
+    |> Stream.drop_while(& &1 != tonic)
+    |> Stream.drop(step)
+    |> Stream.take(1)
+    |> Enum.at(0)
   end
 
   @doc """
@@ -48,7 +47,7 @@ defmodule ScaleGenerator do
   """
   @spec chromatic_scale(tonic :: String.t()) :: list(String.t())
   def chromatic_scale(tonic \\ "C") do
-    scale(tonic, "mmmmmmm")
+    do_scale(Macro.camelize(tonic), "mmmmmmmmmmmm", @chromatic)
   end
 
   @doc """
@@ -65,6 +64,7 @@ defmodule ScaleGenerator do
   """
   @spec flat_chromatic_scale(tonic :: String.t()) :: list(String.t())
   def flat_chromatic_scale(tonic \\ "C") do
+    do_scale(Macro.camelize(tonic), "mmmmmmmmmmmm", @flat_chromatic)
   end
 
   @doc """
@@ -80,6 +80,9 @@ defmodule ScaleGenerator do
 
   @spec find_chromatic_scale(tonic :: String.t()) :: list(String.t())
   def find_chromatic_scale(tonic) do
+    if tonic in ~w(F Bb Eb Ab Db Gb d g c f bb eb),
+      do: flat_chromatic_scale(tonic),
+      else: chromatic_scale(tonic)
   end
 
   @doc """
@@ -94,83 +97,18 @@ defmodule ScaleGenerator do
   C D E F G A B C
   """
   @spec scale(tonic :: String.t(), pattern :: String.t()) :: list(String.t())
-  def scale(tonic_dubious_case, pattern, notes \\ @notes) do
-    sharpened_notes = sharpen_scale(notes)
-
-    tonic =
-      tonic_dubious_case
-      |> String.upcase()
-      |> sharpen()
-
-    start_fun = fn -> [tonic] end
-    end_fun = fn x -> x end
-
-    reducer = fn interval, [current | _] = acc ->
-      log(interval)
-      log(current)
-
-      next_note = step(sharpened_notes, current, interval)
-      log(next_note)
-      result = [next_note | acc]
-      log(result)
-
-      if next_note == tonic do
-        {:halt, result}
-      else
-        {[next_note], result}
-      end
-    end
-
-    middle =
-      pattern
-      |> String.codepoints()
-      |> Stream.cycle()
-      |> Stream.transform(start_fun, reducer, end_fun)
-      |> Enum.to_list()
-
-    [tonic | middle] ++ [tonic]
+  def scale(tonic, pattern) do
+    chromatic_scale = find_chromatic_scale(tonic)
+    tonic = Macro.camelize(tonic)
+    do_scale(tonic, pattern, chromatic_scale)
   end
 
-  defp log(something) do
-    IO.puts(inspect(something))
-  end
+  # Base case: Once we've exhausted the scale pattern, include the final tonic
+  defp do_scale(tonic, "", _chromatic), do: [tonic]
 
-  def next_note(note, amount) do
-    major_note = String.first(note)
-
-    index =
-      @notes
-      |> Enum.find_index(&(&1 == String.first(major_note)))
-
-    @notes
-    |> Enum.fetch!(rem(index + amount, length(@notes)))
-  end
-
-  def sharpen(str) do
-    first = String.first(str)
-
-    case String.last(str) do
-      "b" ->
-        next_note(first, -1)
-
-      _ ->
-        str
-    end
-  end
-
-  def flatten(str) do
-    first = String.first(str)
-
-    case String.last(str) do
-      "b" ->
-        next_note(first, 2)
-
-      _ ->
-        str
-    end
-  end
-
-  def sharpen_scale(scale) do
-    Enum.map(scale, fn note -> sharpen(note) end)
+  # Recursive case: The tonic followed by scale starting from (tonic + first_step) with remaining_steps
+  defp do_scale(tonic, <<first_step :: binary-size(1), remaining_steps :: binary>>, chromatic) do
+    next = step(chromatic, tonic, first_step)
+    [tonic | do_scale(next, remaining_steps, chromatic)]
   end
 end
